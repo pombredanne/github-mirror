@@ -12,6 +12,12 @@ class GHTDataRetrieval < GHTorrent::Command
 
   include GHTorrent::Settings
   include GHTorrent::Logging
+  include GHTorrent::Persister
+
+  def persister
+    @persister ||= connect(:mongo, settings)
+    @persister
+  end
 
   def parse(msg)
     JSON.parse(msg)
@@ -64,9 +70,10 @@ class GHTDataRetrieval < GHTorrent::Command
     repo = data['payload']['pull_request']['base']['repo']['name']
     pullreq_id = data['payload']['number']
     action = data['payload']['action']
+    actor = data['actor']['login']
     created_at = data['created_at']
 
-    ghtorrent.get_pull_request(owner, repo, pullreq_id, action, created_at)
+    ghtorrent.get_pull_request(owner, repo, pullreq_id, action, actor, created_at)
   end
 
   def ForkEvent(data)
@@ -155,6 +162,7 @@ Retrieves events from queues and processes them through GHTorrent
       info "GHTDataRetrieval: Received SIGINT, exiting"
       AMQP.stop { EM.stop }
     }
+
     Signal.trap('TERM') {
       info "GHTDataRetrieval: Received SIGTERM, exiting"
       AMQP.stop { EM.stop }
@@ -165,7 +173,8 @@ Retrieves events from queues and processes them through GHTorrent
                :username => config(:amqp_username),
                :password => config(:amqp_password)) do |connection|
 
-      channel = AMQP::Channel.new(connection, :prefetch => config(:amqp_prefetch))
+      channel = AMQP::Channel.new(connection)
+      channel.prefetch(config(:amqp_prefetch))
       exchange = channel.topic(config(:amqp_exchange), :durable => true,
                                :auto_delete => false)
 
@@ -177,7 +186,10 @@ Retrieves events from queues and processes them through GHTorrent
 
         queue.subscribe(:ack => true) do |headers, msg|
           begin
-            data = parse(msg)
+
+            event = persister.get_underlying_connection[:events].find_one('id' => msg)
+            event.delete '_id'
+            data = parse(event.to_json)
             info "GHTDataRetrieval: Processing event: #{data['type']}-#{data['id']}"
 
             unless options[:filter].nil?
@@ -194,8 +206,7 @@ Retrieves events from queues and processes them through GHTorrent
           rescue Exception => e
             # Give a message a chance to be reprocessed
             if headers.redelivered?
-              data = parse(msg)
-              warn "GHTDataRetrieval: Could not process event: #{data['type']}-#{data['id']}"
+              warn "GHTDataRetrieval: Could not process event: #{msg}"
               headers.reject(:requeue => false)
             else
               headers.reject(:requeue => true)

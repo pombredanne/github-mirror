@@ -55,8 +55,7 @@ An efficient way to get all data for a single repo
 
     user = user_entry[:login]
 
-    repo_entry = ght.transaction{ght.ensure_repo(ARGV[0], ARGV[1], false, false,
-                                                 false, false)}
+    repo_entry = ght.transaction{ght.ensure_repo(ARGV[0], ARGV[1])}
 
     if repo_entry.nil?
       Trollop::die "Cannot find repository #{ARGV[0]}/#{ARGV[1]}"
@@ -74,7 +73,7 @@ An efficient way to get all data for a single repo
     end
 
     functions = %w(ensure_commits ensure_forks ensure_pull_requests
-       ensure_issues ensure_project_members ensure_watchers)
+       ensure_issues ensure_project_members ensure_watchers, ensure_labels)
 
     if ARGV[2].nil?
       functions.each do |x|
@@ -111,9 +110,9 @@ class TransactedGHTorrent < GHTorrent::Mirror
     end
   end
 
-  def ensure_issue(owner, repo, issue_id, events = true, comments = true)
+  def ensure_issue(owner, repo, issue_id, events = true, comments = true, labels = true)
     check_transaction do
-      super(owner, repo, issue_id, events, comments)
+      super(owner, repo, issue_id, events, comments, labels)
     end
   end
 
@@ -126,6 +125,12 @@ class TransactedGHTorrent < GHTorrent::Mirror
   def ensure_watcher(owner, repo, watcher, date_added = nil)
     check_transaction do
       super(owner, repo, watcher, date_added)
+    end
+  end
+
+  def ensure_repo_label(owner, repo, name)
+    check_transaction do
+      super(owner, repo, name)
     end
   end
 
