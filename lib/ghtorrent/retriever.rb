@@ -368,7 +368,7 @@ module GHTorrent
       retrieved_comments.each { |x|
         x['owner'] = owner
         x['repo'] = repo
-        x['issue_id'] = pullreq_id
+        x['pullreq_id'] = pullreq_id.to_i
 
         if persister.find(:pull_request_comments, {'owner' => owner,
                                                    'repo' => repo,
@@ -397,7 +397,7 @@ module GHTorrent
 
         r['repo'] = repo
         r['owner'] = owner
-        r['pullreq_id'] = pullreq_id
+        r['pullreq_id'] = pullreq_id.to_i
         persister.store(:pull_request_comments, r)
         info "Retriever: Added pullreq comment #{owner}/#{repo} #{pullreq_id}->#{comment_id}"
         persister.find(:pull_request_comments, {'repo' => repo, 'owner' => owner,
@@ -526,6 +526,29 @@ module GHTorrent
         debug "Retriever: Issue comment #{owner}/#{repo} #{issue_id}->#{comment_id} exists"
         comment
       end
+    end
+
+    def retrieve_issue_labels(owner, repo, issue_id)
+
+    end
+
+    def retrieve_repo_labels(owner, repo, refr = false)
+      repo_bound_items(owner, repo, :repo_labels,
+                       "repos/#{owner}/#{repo}/labels",
+                       {'repo' => repo, 'owner' => owner},
+                       'name', item = nil, refresh = refr)
+    end
+
+    def retrieve_repo_label(owner, repo, name)
+      repo_bound_item(owner, repo, name, :repo_labels,
+                       "repos/#{owner}/#{repo}/labels",
+                       {'repo' => repo, 'owner' => owner},
+                       'name')
+    end
+
+    def retrieve_issue_labels(owner, repo, issue_id)
+      url = ghurl("repos/#{owner}/#{repo}/issues/#{issue_id}/labels")
+      paged_api_request(url)
     end
 
     # Get current Github events
