@@ -32,9 +32,9 @@ module GHTorrent
         :org_members           => %w(org),
         :watchers              => %w(repo owner login),
         :forks                 => %w(repo owner id),
-        :pull_requests         => %w(repo owner),
+        :pull_requests         => %w(repo owner number),
         :pull_request_comments => %w(repo owner pullreq_id id),
-        :issues                => %w(repo owner issue_id),
+        :issues                => %w(repo owner number),
         :issue_events          => %w(repo owner issue_id id),
         :issue_comments        => %w(repo owner issue_id id)
     }
@@ -164,27 +164,11 @@ module GHTorrent
 
         stats = @mongo.stats
         init_db(@mongo) if stats['collections'] < ENTITIES.size + 2
-        init_db(@mongo) if stats['indexes'] < IDXS.values.flatten.size + ENTITIES.size
+        init_db(@mongo) if stats['indexes'] < IDXS.keys.size + ENTITIES.size
 
         @mongo
       else
         @mongo
-      end
-    end
-
-    # Declare an index on +field+ for +collection+ if it does not exist
-    def ensure_index(collection, field)
-      col = get_entity(collection)
-
-      exists = col.index_information.find {|k,v|
-        k == "#{field}_1"
-      }
-
-      if exists.nil?
-        col.create_index(field, :background => true)
-        STDERR.puts "Creating index on #{collection}(#{field})"
-      else
-        STDERR.puts "Index on #{collection}(#{field}) exists"
       end
     end
 
@@ -192,10 +176,19 @@ module GHTorrent
       ENTITIES.each {|x| mongo.collection(x.to_s)}
 
       # Ensure that the necessary indexes exist
-      IDXS.keys.each do |x|
-        IDXS[x].each do |y|
-          ensure_index(x, y)
+      IDXS.each do |k,v|
+        col = get_entity(k)
+        name = v.join('_1_') + '_1'
+        exists = col.index_information.find {|k,v| k == name}
+
+        idx_fields = v.reduce({}){|acc, x| acc.merge({x => 1})}
+        if exists.nil?
+          col.create_index(idx_fields, :background => true)
+          STDERR.puts "Creating index on #{collection}(#{v})"
+        else
+          STDERR.puts "Index on #{collection}(#{v}) exists"
         end
+
       end
     end
 
