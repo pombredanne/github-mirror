@@ -24,7 +24,7 @@ module GHTorrent
         :events                => %w(id),
         :users                 => %w(login),
         :commits               => %w(sha),
-        :commit_comments       => %w(repo user commit_id),
+        :commit_comments       => %w(commit_id id),
         :repos                 => %w(name owner.login),
         :repo_labels           => %w(repo owner),
         :repo_collaborators    => %w(repo owner login),
@@ -184,9 +184,9 @@ module GHTorrent
         idx_fields = v.reduce({}){|acc, x| acc.merge({x => 1})}
         if exists.nil?
           col.create_index(idx_fields, :background => true)
-          STDERR.puts "Creating index on #{collection}(#{v})"
+          STDERR.puts "Creating index on #{col}(#{v})"
         else
-          STDERR.puts "Index on #{collection}(#{v}) exists"
+          STDERR.puts "Index on #{col}(#{v}) exists"
         end
 
       end
