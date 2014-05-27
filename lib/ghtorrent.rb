@@ -48,6 +48,10 @@ require 'ghtorrent/retriever'
 
 # SQL database fillup methods
 require 'ghtorrent/ghtorrent'
+require 'ghtorrent/transacted_ghtorrent'
+
+# Multi-process queue clients
+require 'ghtorrent/multiprocess_queue_client'
 
 # Commands
 require 'ghtorrent/commands/ght_data_retrieval'
@@ -58,5 +62,7 @@ require 'ghtorrent/commands/ght_load'
 require 'ghtorrent/commands/ght_retrieve_repo'
 require 'ghtorrent/commands/ght_retrieve_user'
 require 'ghtorrent/commands/ght_retrieve_dependents'
+require 'ghtorrent/commands/ght_retrieve_repos'
+require 'ghtorrent/commands/ght_retrieve_one'
 
 # vim: set sta sts=2 shiftwidth=2 sw=2 et ai :

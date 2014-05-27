@@ -5,6 +5,7 @@ require 'ghtorrent/settings'
 require 'ghtorrent/logging'
 require 'ghtorrent/command'
 require 'ghtorrent/retriever'
+require 'ghtorrent/transacted_ghtorrent'
 require 'ghtorrent/commands/ght_retrieve_repo'
 
 class GHTRetrieveUser < GHTRetrieveRepo
@@ -20,7 +21,7 @@ An efficient way to get all data for a single user
 
   def validate
     super
-    Trollop::die "One argument are required" unless args[0] && !args[0].empty?
+    Trollop::die "One argument is required" unless args[0] && !args[0].empty?
   end
 
   def go
@@ -42,7 +43,7 @@ An efficient way to get all data for a single user
       end
     end
 
-    functions = %w(ensure_user_followers ensure_orgs)
+    functions = %w(ensure_user_followers ensure_orgs ensure_org)
 
     if ARGV[2].nil?
       functions.each do |x|
@@ -56,7 +57,7 @@ An efficient way to get all data for a single user
   end
 end
 
-class TransactedGHTorrent < GHTorrent::Mirror
+class TransactedGhtorrent 
 
   def ensure_user_followers(user)
     check_transaction do
@@ -69,4 +70,11 @@ class TransactedGHTorrent < GHTorrent::Mirror
       super(user)
     end
   end
+
+  def ensure_org(user, members = true)
+    check_transaction do
+      super(user, members)
+    end
+  end
+
 end

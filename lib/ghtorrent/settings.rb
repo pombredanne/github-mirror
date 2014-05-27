@@ -20,7 +20,6 @@ module GHTorrent
 
         :mirror_urlbase => 'mirror.urlbase',
         :mirror_persister => 'mirror.persister',
-        :mirror_commit_pages_new_repo => 'mirror.commit_pages_new_repo',
         :mirror_history_pages_back => 'mirror.history_pages_back',
         :uniq_id => 'mirror.uniq_id',
         :user_agent => 'mirror.user_agent',
@@ -31,6 +30,7 @@ module GHTorrent
 
         :github_username => 'mirror.username',
         :github_passwd => 'mirror.passwd',
+        :github_token => 'mirror.token',
 
         :respect_api_ratelimit => 'mirror.respect_api_ratelimit',
 
@@ -51,7 +51,6 @@ module GHTorrent
 
         :mirror_urlbase => 'https://api.github.com/',
         :mirror_persister => 'noop',
-        :mirror_commit_pages_new_repo => 3,
         :mirror_history_pages_back => 1,
         :uniq_id => 'ext_ref_id',
         :user_agent => 'ghtorrent',
@@ -62,6 +61,7 @@ module GHTorrent
 
         :github_username => 'foo',
         :github_passwd => 'bar',
+        :github_token => '',
 
         :respect_api_ratelimit => 'true',
 
@@ -91,10 +91,14 @@ module GHTorrent
       more_keys.each {|k,v| CONFIGKEYS[k] = v}
     end
 
-    def merge_config_values(values)
-      values.reduce(settings) {|acc, k|
-        acc.merge_recursive write_value(settings, CONFIGKEYS[k[0]], k[1])
+    def merge_config_values(config, values)
+      values.reduce(config) {|acc, k|
+        acc.merge_recursive write_value(config, CONFIGKEYS[k[0]], k[1])
       }
+    end
+
+    def override_config(config_file, setting, new_value)
+      merge_config_values(config_file, {setting => new_value})
     end
 
     def settings

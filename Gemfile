@@ -3,5 +3,5 @@ source 'https://rubygems.org'
 gemspec
 
 platforms :jruby do
-  gem "jdbc-mysql"
+  gem 'jdbc-mysql'
 end

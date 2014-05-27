@@ -145,19 +145,25 @@ module GHTorrent
       end
     end
 
-    # Retrieve up to 30 * +:mirror_commit_pages_new_repo+ commits
-    # starting from the provided +sha+
-    def retrieve_commits(repo, sha, user, num_pages = config(:mirror_commit_pages_new_repo))
-      last_sha = if sha == "head" then "master" else sha end
+    # Retrieve commits starting from the provided +sha+
+    def retrieve_commits(repo, sha, user, pages = -1)
 
-      url = ghurl "repos/#{user}/#{repo}/commits?sha=#{last_sha}"
-      commits = paged_api_request(url, num_pages)
+      url = if sha.nil?
+              ghurl "repos/#{user}/#{repo}/commits"
+            else
+              ghurl "repos/#{user}/#{repo}/commits?sha=#{sha}"
+            end
+
+      commits = if pages == -1
+                  paged_api_request(url)
+                else
+                  paged_api_request(url, pages)
+                end
 
       commits.map do |c|
         retrieve_commit(repo, c['sha'], user)
       end
     end
-
 
     def retrieve_repo(user, repo)
       stored_repo = persister.find(:repos, {'owner.login' => user,
@@ -316,38 +322,14 @@ module GHTorrent
     end
 
     def retrieve_pull_req_commits(user, repo, pullreq_id)
-      def is_intra_branch(req)
-        return false if req['head'].nil? or req['head']['repo'].nil?
-        req['head']['repo']['owner']['login'] ==
-            req['base']['repo']['owner']['login'] and
-            req['head']['repo']['full_name'] == req['base']['repo']['full_name']
-      end
+      pr_commits = paged_api_request(ghurl "repos/#{user}/#{repo}/pulls/#{pullreq_id}/commits")
 
-      pull_req = retrieve_pull_request(user, repo, pullreq_id)
+      pr_commits.map do |x|
+        head_user = x['url'].split(/\//)[4]
+        head_repo = x['url'].split(/\//)[5]
 
-      unless is_intra_branch(pull_req)
-
-        # Head repo has been deleted
-        unless pull_req['head']['repo'].nil?
-          head_user = pull_req['head']['repo']['owner']['login']
-          head_repo = pull_req['head']['repo']['name']
-        else
-          # Try to find the commits in the base repo, in case the pull req
-          # has been merged
-          head_user = pull_req['base']['repo']['owner']['login']
-          head_repo = pull_req['base']['repo']['name']
-        end
-
-        commits = paged_api_request(ghurl "repos/#{user}/#{repo}/pulls/#{pullreq_id}/commits")
-        commits.map { |x|
-          retrieve_commit(head_repo, x['sha'], head_user)
-        }
-      else
-        commits = paged_api_request(ghurl "repos/#{user}/#{repo}/pulls/#{pullreq_id}/commits")
-        commits.map { |x|
-          retrieve_commit(repo, x['sha'], user)
-        }
-      end
+        retrieve_commit(head_repo, x['sha'], head_user)
+      end.select{|x| not x.nil?}
     end
 
     def retrieve_pull_req_comments(owner, repo, pullreq_id)

@@ -1,6 +1,6 @@
 require 'rubygems'
 require 'trollop'
-require 'daemons'
+require 'bunny'
 require 'etc'
 
 require 'ghtorrent/settings'
@@ -54,27 +54,10 @@ module GHTorrent
                                                      command.options[:password])
         end
 
-        if command.options[:daemon]
-          if Process.uid == 0
-            # Daemonize as a proper system daemon
-            Daemons.daemonize(:app_name   => File.basename($0),
-                              :dir_mode   => :system,
-                              :log_dir    => "/var/log",
-                              :backtrace  => true,
-                              :log_output => true)
-            STDERR.puts "Became a daemon"
-            # Change effective user id for the process
-            unless command.options[:user].nil?
-              Process.euid = Etc.getpwnam(command.options[:user]).uid
-            end
-          else
-            # Daemonize, but output in current directory
-            Daemons.daemonize(:app_name   => File.basename($0),
-                              :dir_mode   => :normal,
-                              :dir        => Dir.getwd,
-                              :backtrace  => true,
-                              :log_output => true)
-          end
+        unless command.options[:token].nil?
+          command.settings = command.override_config(command.settings,
+                                                     :github_token,
+                                                     command.options[:token])
         end
 
         begin
@@ -107,11 +90,10 @@ Standard options:
         opt :verbose, 'verbose mode', :short => 'v'
         opt :addr, 'ip address to use for performing requests', :short => 'a',
             :type => String
-        opt :daemon, 'run as daemon', :short => 'd'
-        opt :user, 'run as the specified user (only when started as root)',
-            :short => 'u', :type => String
-        opt :username, 'Username at Github', :type => String
+        opt :username, 'Username at Github', :short => 's', :type => String
         opt :password, 'Password at Github', :type => String
+        opt :token, 'OAuth Github token (use instead of username/password)',
+            :type => String, :short => 't'
       end
     end
 
@@ -161,9 +143,70 @@ Standard options:
     def go
     end
 
+    # Specify a handler to incoming messages from a connection to
+    # a queue.
+    # [queue]: The queue name to bind to
+    # [ack]: :before or :after when should acks be send, before or after
+    #        the block returns
+    # [block]: A block with one argument (the message)
+    def queue_client(queue, ack = :after, block)
+
+      stopped = false
+      while not stopped
+        begin
+          conn = Bunny.new(:host => config(:amqp_host),
+                           :port => config(:amqp_port),
+                           :username => config(:amqp_username),
+                           :password => config(:amqp_password))
+          conn.start
+
+          ch  = conn.create_channel
+          debug "Setting prefetch to #{config(:amqp_prefetch)}"
+          ch.prefetch(config(:amqp_prefetch))
+          debug "Connection to #{config(:amqp_host)} succeded"
+
+          x = ch.topic(config(:amqp_exchange), :durable => true,
+                       :auto_delete => false)
+          q   = ch.queue(queue, :durable => true)
+          q.bind(x)
+
+          q.subscribe(:block => true,
+                      :ack => true) do |delivery_info, properties, msg|
+
+            if ack == :before
+              ch.acknowledge(delivery_info.delivery_tag)
+            end
+
+            begin
+              block.call(msg)
+            ensure
+              ch.acknowledge(delivery_info.delivery_tag)
+            end
+          end
+
+        rescue Bunny::TCPConnectionFailed => e
+          warn "Connection to #{config(:amqp_host)} failed. Retrying in 1 sec"
+          sleep(1)
+        rescue Bunny::PossibleAuthenticationFailureError => e
+          warn "Could not authenticate as #{conn.username}"
+        rescue Bunny::NotFound, Bunny::AccessRefused, Bunny::PreconditionFailed => e
+          warn "Channel error: #{e}. Retrying in 1 sec"
+          sleep(1)
+        rescue Interrupt => _
+          stopped = true
+        rescue Exception => e
+          raise e
+        end
+      end
+
+      ch.close unless ch.nil?
+      conn.close unless conn.nil?
+
+    end
+
     def override_config(config_file, setting, new_value)
-      puts "Overriding configuration #{setting}=#{config(setting)} with cmd line #{new_value}"
-      merge_config_values({setting => new_value})
+      puts "Overriding configuration #{setting}=#{config(setting)} with new value #{new_value}"
+      super(config_file, setting, new_value)
     end
 
     private

@@ -23,6 +23,11 @@ module GHTorrent
       debug "GHTorrent: Using cache dir #{config(:cache_dir)}"
     end
 
+    def dispose
+      @db.disconnect unless @db.nil?
+      @persister.close unless @persister.nil?
+    end
+
     # Get a connection to the database
     def get_db
       return @db unless @db.nil?
@@ -205,10 +210,7 @@ module GHTorrent
     # [repo]  The repo to look for commits into.
     # [sha]   The first commit to start retrieving from. If nil, then the
     #         earliest stored commit will be used instead.
-    # [num_pages] The number of commit pages to retrieve
-    def ensure_commits(user, repo, refresh = false, sha = nil,
-                       num_pages = config(:mirror_commit_pages_new_repo)
-                       )
+    def ensure_commits(user, repo, refresh = false, sha = nil)
       userid = @db[:users].filter(:login => user).first[:id]
       repoid = @db[:projects].filter(:owner_id => userid,
                                      :name => repo).first[:id]
@@ -220,9 +222,9 @@ module GHTorrent
                end
 
       commits = if latest.nil?
-                  retrieve_commits(repo, "head", user, num_pages)
+                  retrieve_commits(repo, nil, user)
                 else
-                  retrieve_commits(repo, latest[:sha], user, num_pages)
+                  retrieve_commits(repo, latest[:sha], user)
                 end
 
       commits.map do |c|
@@ -293,7 +295,7 @@ module GHTorrent
             :project_id => project[:id],
             :commit_id => commitid
         )
-        info "GHTorrent: Associating commit  #{sha} with #{user}/#{repo}"
+        debug "GHTorrent: Associating commit  #{sha} with #{user}/#{repo}"
         @db[:project_commits].first(:project_id => project[:id],
                                     :commit_id => commitid)
       else
@@ -599,8 +601,7 @@ module GHTorrent
     # == Returns:
     #  If the repo can be retrieved, it is returned as a Hash. Otherwise,
     #  the result is nil
-    def ensure_repo(user, repo, commits = false, project_members = false,
-                    watchers = false, forks = false, labels = false)
+    def ensure_repo(user, repo)
 
       repos = @db[:projects]
       curuser = ensure_user(user, false, false)
@@ -640,11 +641,102 @@ module GHTorrent
         end
 
         info "GHTorrent: New repo #{user}/#{repo}"
-        ensure_commits(user, repo) if commits
-        ensure_project_members(user, repo) if project_members
-        ensure_watchers(user, repo) if watchers
-        ensure_forks(user, repo) if forks
-        ensure_labels(user, repo) if labels
+
+        pages = config(:mirror_history_pages_back)
+        begin
+          watchdog = nil
+          unless parent.nil?
+            watchdog = Thread.new do
+              slept = 0
+              while true do
+                debug "GHTorrent: In ensure_repo_fork for #{slept} seconds"
+                sleep 1
+                slept += 1
+              end
+            end
+            # Fast path to project forking. Retrieve all commits page by page
+            # until we reach a commit that has been registered with the parent
+            # repository. Then, copy all remaining parent commits to this repo.
+            debug "GHTorrent: Retrieving commits for #{user}/#{repo} until we reach a commit shared with the parent"
+
+            sha = nil
+            # Refresh the latest commits for the parent.
+            retrieve_commits(parent_repo, sha, parent_owner, 1).each do |c|
+              sha = c['sha']
+              ensure_commit(parent_repo, sha, parent_owner, true)
+            end
+
+            sha = nil
+            found = false
+            while not found
+              processed = 0
+              commits = retrieve_commits(repo, sha, user, 1)
+
+              # If only one commit has been retrieved (and this is the same as
+              # the commit since which we query commits from) this mean that
+              # there are no more commits.
+              if commits.size == 1 and commits[0]['sha'] == sha
+                debug "GHTorrent: No shared commit found and no more commits for #{user}/#{repo}"
+                break
+              end
+
+              for c in commits
+                processed += 1
+                exists_in_parent =
+                    !@db.from(:project_commits, :commits).\
+                         where(:project_commits__commit_id => :commits__id).\
+                         where(:project_commits__project_id => parent[:id]).\
+                         where(:commits__sha => c['sha']).first.nil?
+
+                sha = c['sha']
+                if not exists_in_parent
+                  ensure_commit(repo, sha, user, true)
+                else
+                  found = true
+                  debug "GHTorrent: Found commit #{sha} shared with parent, switching to copying commits"
+                  break
+                end
+              end
+              if processed == 0
+                warn "No commits found for #{user}/#{repo}, repo deleted?"
+                found = true
+              end
+            end
+
+            if found
+              shared_commit = @db[:commits].first(:sha => sha)
+              forked_repo = repos.first(:owner_id => curuser[:id], :name => repo)
+
+              @db.from(:project_commits, :commits).\
+                  where(:project_commits__commit_id => :commits__id).\
+                  where(:project_commits__project_id => parent[:id]).\
+                  where('commits.created_at < ?', shared_commit[:created_at]).\
+                  select(:commits__id, :commits__sha).\
+                  each do |c|
+                    @db[:project_commits].insert(
+                        :project_id => forked_repo[:id],
+                        :commit_id => c[:id]
+                    )
+                  debug "GHTorrent: Copied commit #{c[:sha]} from #{parent_owner}/#{parent_repo} -> #{user}/#{repo}"
+              end
+            end
+          else
+            # If the project is not a fork, make sure everything is retrieved.
+            # Temporarily override configuration to retrieve all pages in case
+            # a new repo is added to the database
+            @settings = override_config(@settings, :mirror_history_pages_back, 100000)
+            ensure_commits(user, repo)
+          end
+          ensure_project_members(user, repo)
+          ensure_watchers(user, repo)
+          ensure_forks(user, repo)
+          ensure_labels(user, repo)
+        ensure
+          unless watchdog.nil?
+            watchdog.exit
+          end
+          @settings = override_config(@settings, :mirror_history_pages_back, pages)
+        end
         repos.first(:owner_id => curuser[:id], :name => repo)
       else
         debug "GHTorrent: Repo #{user}/#{repo} exists"
@@ -737,6 +829,12 @@ module GHTorrent
     #
     def ensure_participation(user, organization, members = true)
       org = ensure_org(organization, members)
+
+      if org.nil?
+        warn "Organization #{organization} does not exit"
+        return
+      end
+
       usr = ensure_user(user, false, false)
 
       org_members = @db[:organization_members]
@@ -760,22 +858,26 @@ module GHTorrent
     # ==Parameters:
     # [organization]  The login name of the organization
     #
-    def ensure_org(organization, members)
+    def ensure_org(organization, members = true)
       org = @db[:users].first(:login => organization, :type => 'org')
 
       if org.nil?
         org = ensure_user(organization, false, false)
-        if members
-        retrieve_org_members(organization).map { |x|
-          ensure_participation(ensure_user(x['login'], false, false)[:login],
-                               organization, false)
-        }
+
+        # Not an organization, don't go ahead
+        if org[:type] != 'ORG'
+          warn "GHTorrent: Account #{organization} is not an organization"
+          return nil
         end
-        org
-      else
-        debug "GHTorrent: Organization #{organization} exists"
-        org
+
+        if members
+          retrieve_org_members(organization).map do |x|
+            ensure_participation(ensure_user(x['login'], false, false)[:login],
+                                 organization, false)
+          end
+        end
       end
+      org
     end
 
     ##
@@ -788,7 +890,7 @@ module GHTorrent
     def ensure_commit_comments(user, repo, sha)
       commit_id = @db[:commits].first(:sha => sha)[:id]
       stored_comments = @db[:commit_comments].filter(:commit_id => commit_id)
-      commit_comments = retrieve_commit_comments(sha)
+      commit_comments = retrieve_commit_comments(user, repo, sha)
 
       not_saved = commit_comments.reduce([]) do |acc, x|
         if stored_comments.find{|y| y[:comment_id] == x['id']}.nil?
@@ -932,6 +1034,42 @@ module GHTorrent
       raw_pull_reqs.map { |x| save { ensure_pull_request(owner, repo, x['number']) } }.select { |x| !x.nil? }
     end
 
+    # Adds a pull request history event
+    def ensure_pull_request_history(id, ts, unq, act, actor)
+      user = unless actor.nil?
+               ensure_user(actor, false, false)
+             end
+      pull_req_history = @db[:pull_request_history]
+
+      entry =  if ['opened', 'merged'].include? act
+                  pull_req_history.first(:pull_request_id => id,
+                                         :action => act)
+               else
+                 pull_req_history.first(:pull_request_id => id,
+                                        :created_at => (ts - 3)..(ts + 3),
+                                        :action => act)
+               end
+
+      if entry.nil?
+        pull_req_history.insert(:pull_request_id => id,
+                                :created_at => ts,
+                                :ext_ref_id => unq,
+                                :action => act,
+                                :actor_id => unless user.nil? then user[:id] end)
+        info "GHTorrent: New pull request (#{id}) event (#{act}) by (#{actor}) timestamp #{ts}"
+      else
+        info "GHTorrent: Pull request (#{id}) event (#{act}) by (#{actor}) timestamp #{ts} exists"
+        if entry[:actor_id].nil?
+          pull_req_history.where(:pull_request_id => id,
+                               :created_at => (ts - 3)..(ts + 3),
+                               :action => act)\
+                          .update(:actor_id => user[:id])
+          debug "Pull request (#{id}) event (#{act}) timestamp #{ts} set actor -> #{user[:login]}"
+        end
+      end
+    end
+
+
     ##
     # Process a pull request
     def ensure_pull_request(owner, repo, pullreq_id,
@@ -943,26 +1081,6 @@ module GHTorrent
 
       if project.nil?
         return
-      end
-
-      # Adds a pull request history event
-      def add_history(id, ts, unq, act, actor)
-        user = ensure_user(actor, false, false)
-        pull_req_history = @db[:pull_request_history]
-        entry = pull_req_history.first(:pull_request_id => id,
-                                       :created_at => (ts - 4)..(ts + 4),
-                                       :action => act)
-        if entry.nil?
-          pull_req_history.insert(:pull_request_id => id,
-                                  :created_at => ts,
-                                  :ext_ref_id => unq,
-                                  :action => act,
-                                  :actor_id => unless user.nil? then user[:id] end)
-          info "GHTorrent: New pull request (#{id}) event (#{act}) by (#{actor}) timestamp #{ts}"
-        else
-          entry.update(:actor_id => user[:id])
-          info "GHTorrent: Pull request (#{id}) history entry (#{act}) timestamp #{ts} exists"
-        end
       end
 
       # Checks whether a pull request concerns two branches of the same
@@ -1044,10 +1162,8 @@ module GHTorrent
             :base_repo_id => base_repo[:id],
             :head_commit_id => if not head_commit.nil? then head_commit[:id] end,
             :base_commit_id => base_commit[:id],
-            :user_id => pull_req_user[:id],
             :pullreq_id => pullreq_id,
-            :intra_branch => is_intra_branch(retrieved),
-            :merged => merged
+            :intra_branch => is_intra_branch(retrieved)
         )
         info log_msg(retrieved) + ' was added'
       else
@@ -1078,18 +1194,18 @@ module GHTorrent
 
       if history
         # Actions on pull requests
-        actor = if actor.nil? then pull_req_user[:login] else actor end
         opener = pull_req_user[:login]
-        add_history(pull_req[:id], date(retrieved['created_at']),
+        ensure_pull_request_history(pull_req[:id], date(retrieved['created_at']),
                        retrieved[@ext_uniq], 'opened', opener)
-        # There is an additional merged_by field for merged pull requests
+
         merger = if retrieved['merged_by'].nil? then actor else retrieved['merged_by']['login'] end
-        add_history(pull_req[:id], date(retrieved['merged_at']),
+        ensure_pull_request_history(pull_req[:id], date(retrieved['merged_at']),
                          retrieved[@ext_uniq], 'merged', merger) if (merged && state != 'merged')
+
         closer = if merged then merger else actor end
-        add_history(pull_req[:id], date(retrieved['closed_at']),
+        ensure_pull_request_history(pull_req[:id], date(retrieved['closed_at']),
                          retrieved[@ext_uniq], 'closed', closer) if (closed && state != 'closed')
-        add_history(pull_req[:id], date(created_at), retrieved[@ext_uniq],
+        ensure_pull_request_history(pull_req[:id], date(created_at), retrieved[@ext_uniq],
                          state, actor) unless state.nil?
       end
       ensure_pull_request_commits(owner, repo, pullreq_id) if commits
@@ -1687,8 +1803,6 @@ module GHTorrent
         yield block
       end
     end
-
-    private
 
     # Store a commit contained in a hash. First check whether the commit exists.
     def store_commit(c, repo, user)

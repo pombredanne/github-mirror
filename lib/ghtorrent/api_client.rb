@@ -190,26 +190,56 @@ module GHTorrent
         end
       ensure
         if not from_cache and config(:respect_api_ratelimit) and @remaining < 10
-          sleep = (@reset - Time.now.to_i) / 60
-          debug "APIClient: Request limit reached, sleeping for #{sleep} min"
-          sleep(@reset - Time.now.to_i)
+          to_sleep = @reset - Time.now.to_i + 2
+          debug "APIClient: Request limit reached, sleeping for #{to_sleep} secs"
+          t = Thread.new do
+            slept = 0
+            while true do
+              debug "APIClient: sleeping for #{to_sleep - slept} seconds"
+              sleep 1
+              slept += 1
+            end
+          end
+          sleep(to_sleep)
+          t.exit
         end
+      end
+    end
+
+    def auth_method(username, token)
+      if token.nil? or token.empty?
+        if username.nil? or username.empty?
+          :none
+        else
+          :username
+        end
+      else
+        :token
       end
     end
 
     def do_request(url)
       @attach_ip  ||= config(:attach_ip)
+      @token      ||= config(:github_token)
       @username   ||= config(:github_username)
       @passwd     ||= config(:github_passwd)
       @user_agent ||= config(:user_agent)
+      @remaining  ||= 10
+      @reset      ||= Time.now.to_i + 3600
+      @auth_type  ||= auth_method(@username, @token)
 
-      open_func ||= if @username.nil?
-        lambda {|url| open(url, 'User-Agent' => @user_agent)}
-      else
-        lambda {|url| open(url,
-                           'User-Agent' => @user_agent,
-                           :http_basic_authentication => [@username, @passwd])}
-      end
+      open_func ||=
+          case @auth_type
+            when :none
+              lambda {|url| open(url, 'User-Agent' => @user_agent)}
+            when :username
+              lambda {|url| open(url, 'User-Agent' => @user_agent,
+                                 :http_basic_authentication => [@username, @passwd])}
+            when :token
+              # As per: https://developer.github.com/v3/auth/#via-oauth-tokens
+              lambda {|url| open(url, 'User-Agent' => @user_agent,
+                                 :http_basic_authentication => [@token, 'x-oauth-basic'])}
+          end
 
       result = if @attach_ip.nil? or @attach_ip.eql? '0.0.0.0'
           open_func.call(url)
@@ -229,8 +259,15 @@ module GHTorrent
         (class << self; self; end).instance_eval do
           alias_method :original_open, :open
 
-          define_method(:open) do |conn_address, conn_port|
-            original_open(conn_address, conn_port, ip)
+          case RUBY_VERSION
+          when /1.9/
+            define_method(:open) do |conn_address, conn_port|
+              original_open(conn_address, conn_port, ip)
+            end
+          when /2.0/
+            define_method(:open) do |conn_address, conn_port, local_host, local_port|
+              original_open(conn_address, conn_port, ip, local_port)
+            end
           end
         end
       end
