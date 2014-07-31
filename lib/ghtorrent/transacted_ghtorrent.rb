@@ -5,6 +5,13 @@ require 'ghtorrent/ghtorrent'
 # item
 class TransactedGhtorrent < GHTorrent::Mirror
 
+  def ensure_repo(owner, repo, commits = false, project_members = false,
+                  watchers = false, forks = false, labels = false)
+    check_transaction do
+      super(owner, repo, commits, project_members, watchers, forks, labels)
+    end
+  end
+
   def ensure_commit(repo, sha, user, comments = true)
     check_transaction do
       super(repo, sha, user, comments)
@@ -24,8 +31,8 @@ class TransactedGhtorrent < GHTorrent::Mirror
   end
 
   def ensure_pull_request(owner, repo, pullreq_id,
-      comments = true, commits = true, history = true,
-      state = nil, actor = nil, created_at = nil)
+                          comments = true, commits = true, history = true,
+                          state = nil, actor = nil, created_at = nil)
     check_transaction do
       super(owner, repo, pullreq_id, comments, commits, history, state, actor, created_at)
     end
