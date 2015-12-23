@@ -35,11 +35,6 @@ in the provided project.
     @persister
   end
 
-  def ext_uniq
-    @ext_uniq ||= config(:uniq_id)
-    @ext_uniq
-  end
-
   def ght
     @ght ||= GHTorrent::Mirror.new(settings)
     @ght
@@ -80,7 +75,7 @@ in the provided project.
             dbg number, "processing"
             fix_pull_request(pr)
           end
-        rescue Exception => e
+        rescue StandardError => e
           #raise e
           dbg number, e.message
         end

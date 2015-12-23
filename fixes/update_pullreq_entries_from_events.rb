@@ -14,7 +14,7 @@ class UpdatePullRequestHistoryEvents
   include GHTorrent::Retriever
   include GHTorrent::Persister
 
-  def initialize(config, queue)
+  def initialize(config, queue, options)
     @config = config
     @queue = queue
   end
@@ -26,11 +26,6 @@ class UpdatePullRequestHistoryEvents
   def persister
     @persister ||= connect(:mongo, settings)
     @persister
-  end
-
-  def ext_uniq
-    @ext_uniq ||= config(:uniq_id)
-    @ext_uniq
   end
 
   def settings
@@ -65,11 +60,10 @@ class UpdatePullRequestHistoryEvents
       end
 
       begin
-        @ght.ensure_pull_request_history(pullreq_entry[:id], created_at,
-                                         '', action, actor)
+        @ght.ensure_pull_request_history(pullreq_entry[:id], created_at, action, actor)
 
         logger.debug "Processed PullRequest #{owner}/#{repo} -> #{pullreq_id} (event #{event_id})"
-      rescue Exception => e
+      rescue StandardError => e
         logger.warn "Could not process pull req #{owner}/#{repo} -> #{pullreq_id} (event #{event_id})"
         logger.warn "Reason: #{e}"
       end

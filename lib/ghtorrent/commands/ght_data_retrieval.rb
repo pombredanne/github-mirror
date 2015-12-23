@@ -12,109 +12,13 @@ class GHTDataRetrieval < GHTorrent::Command
   include GHTorrent::Settings
   include GHTorrent::Logging
   include GHTorrent::Persister
-
-  def persister
-    @persister ||= connect(:mongo, settings)
-    @persister
-  end
-
-  def parse(msg)
-    JSON.parse(msg)
-  end
-
-  def PushEvent(data)
-    data['payload']['commits'].each do |c|
-      url = c['url'].split(/\//)
-
-      ghtorrent.get_commit url[4], url[5], url[7]
-    end
-  end
-
-  def WatchEvent(data)
-    owner = data['repo']['name'].split(/\//)[0]
-    repo = data['repo']['name'].split(/\//)[1]
-    watcher = data['actor']['login']
-    created_at = data['created_at']
-
-    ghtorrent.get_watcher owner, repo, watcher, created_at
-  end
-
-  def FollowEvent(data)
-    follower = data['actor']['login']
-    followed = data['payload']['target']['login']
-    created_at = data['created_at']
-
-    ghtorrent.get_follower(follower, followed, created_at)
-  end
-
-  def MemberEvent(data)
-    owner = data['actor']['login']
-    repo = data['repo']['name'].split(/\//)[1]
-    new_member = data['payload']['member']['login']
-    created_at = data['created_at']
-
-    ghtorrent.get_project_member(owner, repo, new_member, created_at)
-  end
-
-  def CommitCommentEvent(data)
-    user = data['repo']['name'].split(/\//)[0]
-    repo = data['repo']['name'].split(/\//)[1]
-    id = data['payload']['comment']['id']
-    sha = data['payload']['comment']['commit_id']
-
-    ghtorrent.get_commit_comment(user, repo, sha, id)
-  end
-
-  def PullRequestEvent(data)
-    owner = data['payload']['pull_request']['base']['repo']['owner']['login']
-    repo = data['payload']['pull_request']['base']['repo']['name']
-    pullreq_id = data['payload']['number']
-    action = data['payload']['action']
-    actor = data['actor']['login']
-    created_at = data['created_at']
-
-    ghtorrent.get_pull_request(owner, repo, pullreq_id, action, actor, created_at)
-  end
-
-  def ForkEvent(data)
-    owner = data['repo']['name'].split(/\//)[0]
-    repo = data['repo']['name'].split(/\//)[1]
-    fork_id = data['payload']['forkee']['id']
-
-    #ghtorrent.get_fork(owner, repo, fork_id)
-  end
-
-  def PullRequestReviewCommentEvent(data)
-    owner = data['repo']['name'].split(/\//)[0]
-    repo = data['repo']['name'].split(/\//)[1]
-    comment_id = data['payload']['comment']['id']
-    pullreq_id = data['payload']['comment']['_links']['pull_request']['href'].split(/\//)[-1]
-
-    ghtorrent.get_pullreq_comment(owner, repo, pullreq_id, comment_id)
-  end
-
-  def IssuesEvent(data)
-    owner = data['repo']['name'].split(/\//)[0]
-    repo = data['repo']['name'].split(/\//)[1]
-    issue_id = data['payload']['issue']['number']
-
-    ghtorrent.get_issue(owner, repo, issue_id)
-  end
-
-  def IssueCommentEvent(data)
-    owner = data['repo']['name'].split(/\//)[0]
-    repo = data['repo']['name'].split(/\//)[1]
-    issue_id = data['payload']['issue']['number']
-    comment_id = data['payload']['comment']['id']
-
-    ghtorrent.get_issue_comment(owner, repo, issue_id, comment_id)
-  end
+  include GHTorrent::EventProcessing
 
   def handlers
-    %w(PushEvent WatchEvent FollowEvent MemberEvent
+    %w(PushEvent WatchEvent FollowEvent MemberEvent CreateEvent
         CommitCommentEvent PullRequestEvent ForkEvent
         PullRequestReviewCommentEvent IssuesEvent IssueCommentEvent)
-    #%w(PullRequestEvent)
+    #%w(ForkEvent)
   end
 
   def prepare_options(options)
@@ -130,20 +34,25 @@ If event_id is provided, only this event is processed.
     super
   end
 
-  def logger
-    ghtorrent.logger
+  def ght
+    #@gh ||= GHTorrent::Mirror.new(@settings)
+    @gh ||= TransactedGHTorrent.new(settings)
+    @gh
   end
 
-  def ghtorrent
-    @gh ||= GHTorrent::Mirror.new(@settings)
-    @gh
+  def logger
+    ght.logger
+  end
+
+  def persister
+    ght.persister
   end
 
   def retrieve_event(evt_id)
     event = persister.get_underlying_connection[:events].find_one('id' => evt_id)
     event.delete '_id'
-    data = parse(event.to_json)
-    info "GHTDataRetrieval: Processing event: #{data['type']}-#{data['id']}"
+    data = JSON.parse(event.to_json)
+    debug "Processing event: #{data['type']}-#{data['id']}"
     data
   end
 
@@ -153,7 +62,7 @@ If event_id is provided, only this event is processed.
       event = retrieve_event(ARGV[0])
 
       if event.nil?
-        warn "GHTDataRetrieval: No event with id: #{ARGV[0]}"
+        warn "No event with id: #{ARGV[0]}"
       else
         send(event['type'], event)
       end
@@ -178,20 +87,20 @@ If event_id is provided, only this event is processed.
       queue = channel.queue("#{h}s", {:durable => true})\
                          .bind(exchange, :routing_key => "evt.#{h}")
 
-      info "GHTDataRetrieval: Binding handler #{h} to routing key evt.#{h}"
+      info "Binding handler #{h} to routing key evt.#{h}"
 
       queue.subscribe(:ack => true) do |headers, properties, msg|
+        start = Time.now
         begin
-
           data = retrieve_event(msg)
           send(h, data)
 
           channel.acknowledge(headers.delivery_tag, false)
-          info "GHTDataRetrieval: Processed event: #{data['type']}-#{data['id']}"
-        rescue Exception => e
+          info "Success processing event. Type: #{data['type']}, ID: #{data['id']}, Time: #{Time.now.to_ms - start.to_ms} ms"
+        rescue StandardError => e
           # Give a message a chance to be reprocessed
           if headers.redelivered?
-            warn "GHTDataRetrieval: Could not process event: #{msg}"
+            warn "Error processing event. Type: #{data['type']}, ID: #{data['id']}, Time: #{Time.now.to_ms - start.to_ms} ms"
             channel.reject(headers.delivery_tag, false)
           else
             channel.reject(headers.delivery_tag, true)

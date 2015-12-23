@@ -3,12 +3,11 @@ require 'ghtorrent/ghtorrent'
 
 # A version of the GHTorrent class that creates a transaction per processed
 # item
-class TransactedGhtorrent < GHTorrent::Mirror
+class TransactedGHTorrent < GHTorrent::Mirror
 
-  def ensure_repo(owner, repo, commits = false, project_members = false,
-                  watchers = false, forks = false, labels = false)
+  def ensure_repo(owner, repo, recursive = false)
     check_transaction do
-      super(owner, repo, commits, project_members, watchers, forks, labels)
+      super(owner, repo, recursive)
     end
   end
 
@@ -27,6 +26,12 @@ class TransactedGhtorrent < GHTorrent::Mirror
   def ensure_fork(owner, repo, fork_id)
     check_transaction do
       super(owner, repo, fork_id)
+    end
+  end
+
+  def ensure_fork_commits(owner, repo, parent_owner, parent_repo)
+    check_transaction do
+      super(owner, repo, parent_owner, parent_repo)
     end
   end
 
@@ -86,8 +91,26 @@ class TransactedGhtorrent < GHTorrent::Mirror
     end
   end
 
+  def ensure_user_followers(user)
+    check_transaction do
+      super(user)
+    end
+  end
+
+  def ensure_orgs(user)
+    check_transaction do
+      super(user)
+    end
+  end
+
+  def ensure_org(user, members = true)
+    check_transaction do
+      super(user, members)
+    end
+  end
+
   def check_transaction(&block)
-    if @db.in_transaction?
+    if get_db.in_transaction?
       yield block
     else
       transaction do

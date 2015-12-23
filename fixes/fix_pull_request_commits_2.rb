@@ -27,11 +27,6 @@ Fixes issues with multiple commits in pull requests
     @persister
   end
 
-  def ext_uniq
-    @ext_uniq ||= config(:uniq_id)
-    @ext_uniq
-  end
-
   def ght
     @ght ||= GHTorrent::Mirror.new(settings)
     @ght
@@ -57,7 +52,7 @@ Fixes issues with multiple commits in pull requests
 
             STDERR.write "processed: #{proc} removed #{rm} added #{add} failed #{failed}"
           end
-        rescue Exception => e
+        rescue StandardError => e
           failed += 1
           puts e.message
           #raise e

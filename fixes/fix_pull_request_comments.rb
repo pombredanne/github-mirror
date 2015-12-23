@@ -17,11 +17,6 @@ class GHTFixPullReqComments < GHTorrent::Command
     @persister
   end
 
-  def ext_uniq
-    @ext_uniq ||= config(:uniq_id)
-    @ext_uniq
-  end
-
   def ght
     @ght ||= GHTorrent::Mirror.new(settings)
     @ght
@@ -91,7 +86,7 @@ class GHTFixPullReqComments < GHTorrent::Command
         end
         sql_upd += upd
         logger.info("Processed pull request comment: #{id}")
-      rescue Exception => e
+      rescue StandardError => e
         logger.warn("Cannot process comment #{id}: #{e.message}")
         #raise e
       ensure

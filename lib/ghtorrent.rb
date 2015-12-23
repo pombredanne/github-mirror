@@ -18,6 +18,11 @@ module GHTorrent
   ROUTEKEY_TEAM_ADD = "evt.TeamAddEvent"
   ROUTEKEY_WATCH = "evt.WatchEvent"
 
+  # Route key for projects
+  ROUTEKEY_PROJECTS = "evt.projects"
+  # Route key for users
+  ROUTEKEY_USERS = "evt.users"
+
 end
 
 # Shared extensions to library methods
@@ -27,11 +32,9 @@ require 'ghtorrent/bson_orderedhash'
 
 # Basic utility modules
 require 'version'
-require 'ghtorrent/gh_torrent_exception'
 require 'ghtorrent/utils'
 require 'ghtorrent/logging'
 require 'ghtorrent/settings'
-require 'ghtorrent/cache'
 require 'ghtorrent/api_client'
 
 # Support for command line utilities offered by this gem
@@ -47,8 +50,9 @@ require 'ghtorrent/persister'
 require 'ghtorrent/retriever'
 
 # SQL database fillup methods
+require 'ghtorrent/event_processing'
 require 'ghtorrent/ghtorrent'
-require 'ghtorrent/transacted_ghtorrent'
+require 'ghtorrent/transacted_gh_torrent'
 
 # Multi-process queue clients
 require 'ghtorrent/multiprocess_queue_client'
@@ -57,12 +61,14 @@ require 'ghtorrent/multiprocess_queue_client'
 require 'ghtorrent/commands/ght_data_retrieval'
 require 'ghtorrent/commands/ght_mirror_events'
 require 'ghtorrent/commands/ght_get_more_commits'
-require 'ghtorrent/commands/ght_rm_dupl'
 require 'ghtorrent/commands/ght_load'
 require 'ghtorrent/commands/ght_retrieve_repo'
 require 'ghtorrent/commands/ght_retrieve_user'
 require 'ghtorrent/commands/ght_retrieve_dependents'
 require 'ghtorrent/commands/ght_retrieve_repos'
 require 'ghtorrent/commands/ght_retrieve_one'
+require 'ghtorrent/commands/ght_retrieve_users'
+require 'ghtorrent/commands/ght_update_repo'
+require 'ghtorrent/commands/ght_update_repos'
 
 # vim: set sta sts=2 shiftwidth=2 sw=2 et ai :

@@ -15,21 +15,21 @@ Gem::Specification.new do |s|
   s.require_paths = ['lib']
   s.rdoc_options  = ['--charset=UTF-8']
   s.executables   = ['ght-data-retrieval', 'ght-mirror-events', 'ght-load',
-                     'ght-rm-dupl', 'ght-process-event', 'ght-get-more-commits',
-                     'ght-retrieve-repo', 'ght-retrieve-user']
+                     'ght-get-more-commits', 'ght-retrieve-repo',
+                     'ght-retrieve-user']
   s.files         = FileList['lib/**/*.rb',
                              'bin/*',
                              '[A-Z]*',
                              'spec/**/*'].to_a
-
+  s.required_ruby_version = '~> 2.0'
+  
   s.add_runtime_dependency 'mongo', '~> 1.9', '>= 1.9.0'
   s.add_runtime_dependency 'bson_ext', '~> 1.9', '>= 1.9.0'
   s.add_runtime_dependency 'trollop', '~> 2.0', '>= 2.0.0'
   s.add_runtime_dependency 'sequel', '~> 4.5', '>= 4.5.0'
   s.add_runtime_dependency 'bunny', '~> 1.0', '>= 1.0.0'
 
-  s.add_development_dependency 'rspec', '~> 2.14', '>= 2.14.0'
-  s.add_development_dependency 'webmock', ['~> 1.16']
+  s.add_development_dependency 'influxdb', '0.1.9' 
 
   begin
     require 'changelog'

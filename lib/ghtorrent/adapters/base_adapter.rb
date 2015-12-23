@@ -5,13 +5,13 @@ module GHTorrent
     ENTITIES = [:users, :commits, :followers, :repos, :events, :org_members,
         :commit_comments, :repo_collaborators, :watchers, :pull_requests,
         :forks, :pull_request_comments, :issue_comments, :issues, :issue_events,
-        :repo_labels
-    ]
+        :repo_labels, :geo_cache
+    ].sort
 
     # Stores +data+ into +entity+. Returns a unique key for the stored entry.
     def store(entity, data = {})
-      unless ENTITIES.include?(entity)
-        raise GHTorrentException.new("Perister: Entity #{entity} not known")
+      if bsearch(ENTITIES, entity).nil?
+        raise "Perister: Entity #{entity} not known"
       end
     end
 
@@ -51,29 +51,22 @@ module GHTorrent
     # The results are returned as an array of hierarchical maps, one for each
     # matching JSON object.
     def find(entity, query = {})
-      unless ENTITIES.include?(entity)
-        raise GHTorrentException.new("Perister: Entity #{entity} not known")
-      end
-    end
-
-    # Find the record identified by +id+ in +entity+
-    def find_by_ext_ref_id(entity, id)
-      unless ENTITIES.include?(entity)
-        raise GHTorrentException.new("Perister: Entity #{entity} not known")
+      if bsearch(ENTITIES, entity).nil?
+        raise "Perister: Entity #{entity} not known"
       end
     end
 
     # Count the number of entries returned by +query+ without retrieving them.
     # The +query+ can be any query supported by +find+.
     def count(entity, query = {})
-      unless ENTITIES.include?(entity)
-        raise GHTorrentException.new("Perister: Entity #{entity} not known")
+      if bsearch(ENTITIES, entity).nil?
+        raise "Perister: Entity #{entity} not known"
       end
     end
 
     def del(entity, query = {})
-      unless ENTITIES.include?(entity)
-        raise GHTorrentException.new("Perister: Entity #{entity} not known")
+      if bsearch(ENTITIES, entity).nil?
+        raise "Perister: Entity #{entity} not known"
       end
     end
 
@@ -86,6 +79,23 @@ module GHTorrent
     # Close the current connection and release any held resources
     def close
       raise "Unimplemented"
+    end
+
+    private
+
+    def bsearch( arr, t,from=0, to=nil)
+      if to.nil?
+        to = arr.size - 1
+      end
+      return if from > to
+      mid = (from + to ) / 2
+      if arr[mid] > t
+        bsearch arr, t, 0, mid - 1
+      elsif arr[mid] < t
+        bsearch arr, t, mid + 1, to
+      else
+        mid
+      end
     end
   end
 end

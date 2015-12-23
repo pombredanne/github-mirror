@@ -1,0 +1,183 @@
+#!/usr/bin/env ruby
+#
+
+require 'rubygems'
+require 'trollop'
+require 'influxdb'
+require 'pp'
+require 'time'
+
+def parse_api_client_line(line)
+  if line.start_with?("Successful")
+    # Successful request. URL: https://api.github.com/repos/amizony/self-destructing-task-list/comments/11518274?per_page=100, Remaining: 3949, Total: 423 ms
+    remaining, elapsed = line.match(/.*Remaining: ([\d]+), Total: ([\d]+) ms/).captures
+    {
+        :outcome => "success",
+        :elapsed => elapsed.to_i,
+        :remaining => remaining.to_i
+    }
+  elsif line.start_with?("Failed")
+    # Failed request. URL: https://api.github.com/repos/mingliang7/hotel/commits?per_page=100, Status code: 409, Status: Conflict, Access: ghtorrent, IP: 0.0.0.0, Remaining: 3332
+    code, elapsed = line.match(/.*Status code: ([^,]+), .*Remaining: ([\d]+)/).captures
+    {
+        :outcome => "error",
+        :error_code => code.to_i,
+        :remaining => remaining.to_i
+    }
+  else
+    {}
+  end
+end
+
+def parse_data_retrieval_line(line)
+  #Success processing event. Type: PushEvent, ID: 2863181313, Time: 967 ms
+  return {} unless line.start_with?("Success") or line.start_with?("Error")
+  outcome, evt_type, time = line.match(/([^\ ]+) processing event\. Type: ([\D]+)Event, .*, Time: ([\d]+) ms/).captures
+
+  {
+      :outcome => outcome.downcase,
+      :evt_type => evt_type,
+      :elapsed => time.to_i
+  }
+end
+
+def parse_retriever_line(line)
+
+  if line.start_with?("Added")
+    # Added repo hiropong -> googlemaplesson
+    outcome = "success"
+    entity = line.split(/ /)[1]
+  elsif line.start_with?("Could not find")
+    # Could not find commit_comment 12106552. Deleted?
+    outcome = "failure"
+    entity = line.split(/ /)[3]
+  else
+    return {}
+  end
+
+  {
+      :outcome => outcome,
+      :entity => entity
+  }
+
+end
+
+def parse_ghtorrent_line(line)
+
+  if line.start_with?("Added")
+    # Added user hayjohnny2000
+    # Added issue_event etsy/logster -> 1/etsy/logster -> 1/417355
+    outcome = "success"
+    entity = line.split(/ /)[1]
+  elsif line.start_with?("Could not retrieve")
+    # Could not retrieve commit_comment 12106552. Deleted?
+    outcome = "failure"
+    entity = line.split(/ /)[3]
+  else
+    return {}
+  end
+
+  {
+      :outcome => outcome,
+      :entity => entity
+  }
+
+end
+
+def parse_log_line(line)
+  begin
+    severity, time, progname, stage, msg =
+        line.match(/([A-Z]+), (.+), (.+) -- ([^:]*?): (.*)/).captures
+  rescue
+    puts "Error parsing line: #{line}"
+    return {}
+  end
+
+  return {} if severity.downcase == 'debug'
+  stage = stage.split(/\./)[0]
+  data = {
+      :time => Time.iso8601(time).to_f,
+      :client => progname,
+      :severity => severity,
+      :stage => stage
+  }
+
+  return {} if msg.nil? or msg.length == 0
+
+
+  stage_specific =
+    begin
+      case stage
+        when 'api_client'
+          parse_api_client_line(msg)
+        when 'ght_data_retrieval'
+          parse_data_retrieval_line(msg)
+        when 'retriever'
+          parse_retriever_line(msg)
+        when 'ghtorrent'
+          parse_ghtorrent_line(msg)
+        else
+          {}
+      end
+    rescue
+      puts "Error parsing line: #{msg}"
+      {}
+    end
+
+  return {} if stage_specific.empty?
+  data.merge(stage_specific)
+end
+
+opts = Trollop::options do
+  banner <<-END
+  Store GHTorrent log output to InfluxDB. By default reads from STDIN.
+  Can be configured to watch files in directories.
+
+Options:
+  END
+
+  opt :watch, "Use watch mode", :sort => 'w'
+  opt :watch_pattern, "Pattern for files to watch",
+    :short => 'p', :default => '*.log'
+
+  opt :db_server, "InfluxDB server to use", :type => String,
+    :short => 's', :default => '127.0.0.1'
+  opt :db_port, "UDP port the InfluxDB server listens to", :type => Integer,
+      :short => 'x', :default => 4444
+end
+
+influx = InfluxDB::Client.new("ghtorrent",
+                              :udp => {
+                                :host => opts[:db_server],
+                                :port => opts[:db_port]
+                             }, :host => opts[:db_server])
+influx.get_database_list
+puts "Connected to InfluxDB (#{opts[:db_server]}:#{opts[:db_port]})"
+
+if opts[:watch]
+  require 'filewatch/tail'
+
+  t = FileWatch::Tail.new
+  t.tail(opts[:watch_pattern])
+
+  t.subscribe do |path, line|
+    p = parse_log_line(line)
+    next if p.empty?
+
+    pp p
+    #influx.write_point(p[:stage], p)
+  end
+else
+  puts "Reading from STDIN..."
+  ARGF.each do |line|
+    next if line !~ /^[IDEW]/
+
+    begin
+      p = parse_log_line(line)
+      next if p.empty?
+      pp p
+      influx.write_point(p[:stage], p)
+    rescue
+    end
+  end
+end

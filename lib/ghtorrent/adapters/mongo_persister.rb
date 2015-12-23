@@ -36,7 +36,8 @@ module GHTorrent
         :pull_request_comments => %w(repo owner pullreq_id id),
         :issues                => %w(repo owner number),
         :issue_events          => %w(repo owner issue_id id),
-        :issue_comments        => %w(repo owner issue_id id)
+        :issue_comments        => %w(repo owner issue_id id),
+        :geo_cache             => %w(key)
     }
 
     attr_reader :settings
@@ -68,12 +69,6 @@ module GHTorrent
         r[@uniq] = r['_id'].to_s;
         r.to_h
       }
-    end
-
-    # Find the record identified by +id+ in +entity+
-    def find_by_ext_ref_id(entity, id)
-      super
-      raise NotImplementedError
     end
 
     # Count the number of items returned by +query+
@@ -143,6 +138,8 @@ module GHTorrent
           get_collection("issue_events")
         when :repo_labels
           get_collection("repo_labels")
+        when :geo_cache
+          get_collection("geo_cache")
       end
     end
 
@@ -162,10 +159,12 @@ module GHTorrent
                                            .db(config(:mongo_db))
                  end
 
-        @mongo.authenticate(config(:mongo_username), config(:mongo_passwd))
+        unless config(:mongo_username).nil?
+          @mongo.authenticate(config(:mongo_username), config(:mongo_passwd))
+        end
         stats = @mongo.stats
-        init_db(@mongo) if stats['collections'] < ENTITIES.size + 2
-        init_db(@mongo) if stats['indexes'] < IDXS.keys.size + ENTITIES.size
+        #init_db(@mongo) if stats['collections'] < ENTITIES.size + 2
+        #init_db(@mongo) if stats['indexes'] < IDXS.keys.size + ENTITIES.size
 
         @mongo
       else

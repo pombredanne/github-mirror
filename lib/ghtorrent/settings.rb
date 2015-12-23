@@ -24,19 +24,19 @@ module GHTorrent
         :uniq_id => 'mirror.uniq_id',
         :user_agent => 'mirror.user_agent',
 
-        :cache_mode      => 'mirror.cache_mode',
-        :cache_dir       => 'mirror.cache_dir',
-        :cache_stale_age => 'mirror.cache_stale_age',
-
         :github_username => 'mirror.username',
         :github_passwd => 'mirror.passwd',
         :github_token => 'mirror.token',
 
-        :respect_api_ratelimit => 'mirror.respect_api_ratelimit',
-
         :attach_ip => 'mirror.attach_ip',
 
-        :rescue_loops => 'mirror.rescue_loops'
+        :rescue_loops => 'mirror.rescue_loops',
+        :req_limit => 'mirror.req_limit',
+        :geoloc_wait => 'mirror.geoloc_wait',
+
+        :logging_level => 'logging.level',
+        :logging_uniq => 'logging.uniq',
+        :logging_file => 'logging.file'
     }
 
     DEFAULTS = {
@@ -52,22 +52,21 @@ module GHTorrent
         :mirror_urlbase => 'https://api.github.com/',
         :mirror_persister => 'noop',
         :mirror_history_pages_back => 1,
-        :uniq_id => 'ext_ref_id',
         :user_agent => 'ghtorrent',
-
-        :cache_mode      => 'dev',
-        :cache_dir       => Dir::tmpdir + File::SEPARATOR + 'ghtorrent',
-        :cache_stale_age => 604800,
 
         :github_username => 'foo',
         :github_passwd => 'bar',
         :github_token => '',
 
-        :respect_api_ratelimit => 'true',
-
         :attach_ip => '0.0.0.0',
 
-        :rescue_loops => 'true'
+        :rescue_loops => 'true',
+        :req_limit => 4998,
+        :geoloc_wait => 2,
+
+        :logging_level => 'info',
+        :logging_uniq => '',
+        :logging_file => 'stdout'
     }
 
     def config(key, use_default = true)
@@ -78,7 +77,7 @@ module GHTorrent
         else
           a
         end
-      rescue Exception => e
+      rescue StandardError => e
         if use_default
           DEFAULTS[key]
         else
@@ -102,7 +101,7 @@ module GHTorrent
     end
 
     def settings
-      raise Exception.new('Unimplemented')
+      raise StandardError.new('Unimplemented')
     end
 
   end

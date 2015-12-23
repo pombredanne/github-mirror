@@ -18,11 +18,6 @@ class GHTFixIssueLabels < GHTorrent::Command
     @persister
   end
 
-  def ext_uniq
-    @ext_uniq ||= config(:uniq_id)
-    @ext_uniq
-  end
-
 
   def go
     @ght ||= GHTorrent::Mirror.new(settings)
@@ -52,7 +47,7 @@ class GHTFixIssueLabels < GHTorrent::Command
               lbls += added.size
               STDERR.write "\r Processed #{issues} issues, #{lbls} labels"
           end
-        rescue Exception => e
+        rescue StandardError => e
           logger.debug "Could not add labels to issue #{issue['owner']}/#{issue['repo']} -> #{issue['number']}"
           logger.debug "Reason: #{e}"
         end

@@ -3,4 +3,4 @@
 require 'rubygems'
 require 'ghtorrent'
 
-GHRMDupl.run
+GHTUpdateRepo.run(ARGV)

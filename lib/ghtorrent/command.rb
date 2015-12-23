@@ -17,6 +17,7 @@ module GHTorrent
   class Command
 
     include GHTorrent::Settings
+    include GHTorrent::Logging
 
     # Specify the run method for subclasses.
     class << self
@@ -60,6 +61,19 @@ module GHTorrent
                                                      command.options[:token])
         end
 
+        unless command.options[:req_limit].nil?
+          command.settings = command.override_config(command.settings,
+                                                     :req_limit,
+                                                     command.options[:req_limit])
+        end
+
+        unless command.options[:uniq].nil?
+          command.settings = command.override_config(command.settings,
+                                                     :logging_uniq,
+                                                     command.options[:uniq])
+        end
+
+
         begin
           command.go
         rescue => e
@@ -88,12 +102,16 @@ Standard options:
         opt :config, 'config.yaml file location', :short => 'c',
             :default => 'config.yaml'
         opt :verbose, 'verbose mode', :short => 'v'
-        opt :addr, 'ip address to use for performing requests', :short => 'a',
+        opt :addr, 'IP address to use for performing requests', :short => 'a',
             :type => String
         opt :username, 'Username at Github', :short => 's', :type => String
         opt :password, 'Password at Github', :type => String
         opt :token, 'OAuth Github token (use instead of username/password)',
             :type => String, :short => 't'
+        opt :req_limit, 'Request limit for provided account (in reqs/hour)',
+            :type => Integer, :short => 'l'
+        opt :uniq, 'Unique name for this command. Will appear in logs.',
+            :type => String, :short => 'u'
       end
     end
 
@@ -143,13 +161,13 @@ Standard options:
     def go
     end
 
-    # Specify a handler to incoming messages from a connection to
-    # a queue.
-    # [queue]: The queue name to bind to
-    # [ack]: :before or :after when should acks be send, before or after
-    #        the block returns
-    # [block]: A block with one argument (the message)
-    def queue_client(queue, ack = :after, block)
+    # Specify a handler to incoming messages from a connection to a queue.
+    #
+    # @param queue [String] the queue name to bind to
+    # @param key [String] routing key for msgs for binding the queue to the exchange.
+    # @param ack [Symbol] when should acks be send, :before or :after the block returns
+    # @param block [Block]: A block accepting one argument (the message)
+    def queue_client(queue, key = queue, ack = :after, block)
 
       stopped = false
       while not stopped
@@ -167,11 +185,11 @@ Standard options:
 
           x = ch.topic(config(:amqp_exchange), :durable => true,
                        :auto_delete => false)
-          q   = ch.queue(queue, :durable => true)
-          q.bind(x)
+          q = ch.queue(queue, :durable => true)
+          q.bind(x, :routing_key => key)
 
           q.subscribe(:block => true,
-                      :ack => true) do |delivery_info, properties, msg|
+                      :manual_ack => true) do |delivery_info, properties, msg|
 
             if ack == :before
               ch.acknowledge(delivery_info.delivery_tag)
@@ -180,7 +198,9 @@ Standard options:
             begin
               block.call(msg)
             ensure
-              ch.acknowledge(delivery_info.delivery_tag)
+              if ack != :before
+                ch.acknowledge(delivery_info.delivery_tag)
+              end
             end
           end
 
@@ -194,7 +214,7 @@ Standard options:
           sleep(1)
         rescue Interrupt => _
           stopped = true
-        rescue Exception => e
+        rescue StandardError => e
           raise e
         end
       end

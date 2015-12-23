@@ -38,13 +38,8 @@ Retrieve just one item
     @persister
   end
 
-  def ext_uniq
-    @ext_uniq ||= config(:uniq_id)
-    @ext_uniq
-  end
-
   def ght
-    @ght ||= TransactedGhtorrent.new(settings)
+    @ght ||= TransactedGHTorrent.new(settings)
     @ght
   end
 

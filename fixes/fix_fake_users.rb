@@ -13,7 +13,7 @@ class FixFakeUser
   include GHTorrent::Settings
   include GHTorrent::APIClient
 
-  def initialize(config, queue)
+  def initialize(config, queue, options)
     @config = config
     @queue = queue
   end
@@ -25,11 +25,6 @@ class FixFakeUser
   def persister
     @persister ||= connect(:mongo, settings)
     @persister
-  end
-
-  def ext_uniq
-    @ext_uniq ||= config(:uniq_id)
-    @ext_uniq
   end
 
   def settings
