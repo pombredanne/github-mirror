@@ -15,12 +15,6 @@ module GHTorrent
     include GHTorrent::Settings
     include GHTorrent::Logging
 
-    # This is to fix an annoying bug in JRuby's SSL not being able to
-    # verify a valid certificate.
-    if defined? JRUBY_VERSION
-      OpenSSL::SSL::VERIFY_PEER = OpenSSL::SSL::VERIFY_NONE
-    end
-
     # A paged request. Used when the result can expand to more than one
     # result pages.
     def paged_api_request(url, pages = config(:mirror_history_pages_back),
@@ -120,21 +114,31 @@ module GHTorrent
       end
     end
 
+    def fmt_token(token)
+      if token.nil? or token.empty?
+        '<empty-token>'
+      else
+        token[0..10]
+      end
+    end
+
     def request_error_msg(url, exception)
-      <<-MSG
+      msg = <<-MSG
             Failed request. URL: #{url}, Status code: #{exception.io.status[0]},
             Status: #{exception.io.status[1]},
-            Access: #{if (@token.nil? or @token.empty?) then @username else @token end},
+            Access: #{fmt_token(@token)},
             IP: #{@attach_ip}, Remaining: #{@remaining}
       MSG
+      msg.strip.gsub(/\s+/, ' ').gsub("\n", ' ')
     end
 
     def error_msg(url, exception)
-      <<-MSG
+      msg = <<-MSG
             Failed request. URL: #{url}, Exception: #{exception.message},
-            Access: #{if (@token.nil? or @token.empty?) then @username else @token end},
+            Access: #{fmt_token(@token)},
             IP: #{@attach_ip}, Remaining: #{@remaining}
       MSG
+      msg.strip.gsub(/\s+/, ' ').gsub("\n", ' ')
     end
 
     # Do the actual request and return the result object
@@ -149,25 +153,31 @@ module GHTorrent
 
         contents
       rescue OpenURI::HTTPError => e
-          @remaining = e.io.meta['x-ratelimit-remaining'].to_i
-          @reset = e.io.meta['x-ratelimit-reset'].to_i
+        @remaining = e.io.meta['x-ratelimit-remaining'].to_i
+        @reset = e.io.meta['x-ratelimit-reset'].to_i
 
-          case e.io.status[0].to_i
+        case e.io.status[0].to_i
           # The following indicate valid Github return codes
           when 400, # Bad request
-              401, # Unauthorized
               403, # Forbidden
               404, # Not found
               422 then # Unprocessable entity
-            total = Time.now.to_ms - start_time.to_ms
-            warn request_error_msg(url, e).strip.gsub(/\s+/,' ').gsub("\n", ' ')
-           return nil
+            warn request_error_msg(url, e)
+            return nil
+          when 401 # Unauthorized
+            warn request_error_msg(url, e)
+            warn "Unauthorised request with token: #{@token}"
+            raise e
+          when 451 # DCMA takedown
+            warn request_error_msg(url, e)
+            warn "Repo was taken down (DCMA)"
+            return nil
           else # Server error or HTTP conditions that Github does not report
-            warn request_error_msg(url, e).strip.gsub(/\s+/,' ').gsub("\n", ' ')
+            warn request_error_msg(url, e)
             raise e
         end
       rescue StandardError => e
-        warn error_msg(url, e).strip.gsub(/\s+/,' ').gsub("\n", ' ')
+        warn error_msg(url, e)
         raise e
       ensure
         # The exact limit is only enforced upon the first @reset
@@ -188,36 +198,24 @@ module GHTorrent
       end
     end
 
-    def auth_method(username, token)
-      if token.nil? or token.empty?
-        if username.nil? or username.empty?
-          :none
-        else
-          :username
-        end
-      else
-        :token
-      end
+    def auth_method(token)
+      return :token unless token.nil? or token.empty?
+      return :none
     end
 
     def do_request(url)
       @attach_ip  ||= config(:attach_ip)
       @token      ||= config(:github_token)
-      @username   ||= config(:github_username)
-      @passwd     ||= config(:github_passwd)
       @user_agent ||= config(:user_agent)
       @remaining  ||= 5000
       @reset      ||= Time.now.to_i + 3600
-      @auth_type  ||= auth_method(@username, @token)
+      @auth_type  ||= auth_method(@token)
       @req_limit  ||= config(:req_limit)
 
       open_func ||=
           case @auth_type
             when :none
               lambda {|url| open(url, 'User-Agent' => @user_agent)}
-            when :username
-              lambda {|url| open(url, 'User-Agent' => @user_agent,
-                                 :http_basic_authentication => [@username, @passwd])}
             when :token
               # As per: https://developer.github.com/v3/auth/#via-oauth-tokens
               lambda {|url| open(url, 'User-Agent' => @user_agent,

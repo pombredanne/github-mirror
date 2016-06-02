@@ -24,8 +24,6 @@ module GHTorrent
         :uniq_id => 'mirror.uniq_id',
         :user_agent => 'mirror.user_agent',
 
-        :github_username => 'mirror.username',
-        :github_passwd => 'mirror.passwd',
         :github_token => 'mirror.token',
 
         :attach_ip => 'mirror.attach_ip',
@@ -51,11 +49,9 @@ module GHTorrent
 
         :mirror_urlbase => 'https://api.github.com/',
         :mirror_persister => 'noop',
-        :mirror_history_pages_back => 1,
+        :mirror_history_pages_back => 10,
         :user_agent => 'ghtorrent',
 
-        :github_username => 'foo',
-        :github_passwd => 'bar',
         :github_token => '',
 
         :attach_ip => '0.0.0.0',

@@ -18,6 +18,16 @@ module GHTorrent
         @ghtorrent
       end
 
+      def update_persister(login, new_user)
+        r = persister.del(:users, {'login' => login})
+        persister.store(:users, new_user)
+
+        if r > 0
+          debug "Persister entry for user #{login} updated, #{r} records removed"
+        else
+          debug "Added persister entry from user #{login}"
+        end
+      end
 
       def retrieve_user(login)
         debug "User #{login} update started"
@@ -30,7 +40,7 @@ module GHTorrent
             exit
           else
             ght.transaction do
-              ght.get_db.from(:users).where(:login => login).update(:users__deleted => true)
+              ght.db.from(:users).where(:login => login).update(:users__deleted => true)
             end
             warn "User #{login} marked as deleted"
             return
@@ -42,19 +52,29 @@ module GHTorrent
           end
         end
 
+        # Refresh the persister with the latest info from GitHub
+        unless on_github.empty?
+          update_persister(login, on_github)
+        end
+
         # Update geo location information
         geo = geolocate(on_github['location'])
- 
-        ght.get_db.from(:users).where(:login => login).update(
-          :users__long => geo['long'].to_f,
-          :users__lat => geo['lat'].to_f,
-          :users__country_code => geo['country_code'],
-          :users__state => geo['state'],
-          :users__city => geo['city'],
-        )
 
-        ght.get_db.from(:users).where(:login => login).update(
-          :users__location => on_github['location']
+        ght.db.from(:users).where(:login => login).update(
+          # Geolocation info
+          :users__long         => geo['long'].to_f,
+          :users__lat          => geo['lat'].to_f,
+          :users__country_code => geo['country_code'],
+          :users__state        => geo['state'],
+          :users__city         => geo['city'],
+          :users__location     => on_github['location'],
+
+          # user details
+          :users__name         => on_github['name'],
+          :users__company      => on_github['company'],
+          :users__email        => on_github['email'],
+          :users__deleted      => false,
+          :users__fake         => false
         )
 
         user = user_entry[:login]
@@ -72,8 +92,8 @@ module GHTorrent
         functions.each do |x|
           send_message(x, user)
         end
-        
-        debug "User #{login} updated"
+
+        info "User #{login} updated"
       end
     end
   end

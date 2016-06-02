@@ -15,7 +15,7 @@ module GHTorrent
       end
 
       def db
-        @db ||= ght.get_db
+        ght.db
       end
 
       def ght
@@ -36,28 +36,27 @@ module GHTorrent
         where(:users__login => owner).\
         where(:projects__name => repo).\
         update(:projects__deleted => true)
-        info("Project #{owner}/#{repo} marked as deleted")
+        info("Repo #{owner}/#{repo} marked as deleted")
       end
 
       def update_mysql(owner, repo, retrieved)
 
         parent = unless retrieved['parent'].nil?
                    ght.ensure_repo(retrieved['parent']['owner']['login'],
-                                    retrieved['parent']['name'])
+                                   retrieved['parent']['name'])
                  end
 
-       db.from(:projects, :users).\
-       where(:projects__owner_id => :users__id).\
-       where(:users__login => owner).\
-       where(:projects__name => repo).\
-       update(
-                :projects__url => retrieved['url'],
-                :projects__description => retrieved['description'],
-                :projects__language => retrieved['language'],
-                :projects__created_at => date(retrieved['created_at']),
-                :projects__updated_at => Time.now,
-                :projects__forked_from => unless parent.nil? then parent[:id] end)
-        debug("Repo #{owner}/#{repo} updated")
+        db.from(:projects, :users).\
+        where(:projects__owner_id => :users__id).\
+        where(:users__login => owner).\
+        where(:projects__name => repo).\
+        update(:projects__url         => retrieved['url'],
+               :projects__description => retrieved['description'],
+               :projects__language    => retrieved['language'],
+               :projects__created_at  => date(retrieved['created_at']),
+               :projects__updated_at  => Time.now,
+               :projects__forked_from => unless parent.nil? then parent[:id] end)
+        info("Repo #{owner}/#{repo} updated")
 
         ght.ensure_languages(owner, repo)
       end
@@ -70,16 +69,12 @@ module GHTorrent
       end
 
       def update_mongo(owner, repo, new_repo)
-        r = persister.\
-            get_underlying_connection[:repos].\
-            remove({'owner.login' => owner, 'name' => repo})
-        persister.\
-            get_underlying_connection[:repos].\
-            insert(new_repo)
-        if r['n'] > 0
-          debug("MongoDB entry for repo #{owner}/#{repo} updated (#{r['n']} records removed)")
+        r = persister.del(:repos, {'owner.login' => owner, 'name' => repo})
+        persister.store(:repos, new_repo)
+        if r > 0
+          debug("Persister entry for repo #{owner}/#{repo} updated (#{r} records removed)")
         else
-          debug("Added MongoDB entry for repo #{owner}/#{repo}")
+          debug("Added persister entry for repo #{owner}/#{repo}")
         end
       end
 
