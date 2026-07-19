@@ -37,7 +37,7 @@ class MultiprocessQueueClient < GHTorrent::Command
 Retrieve data for multiple item in parallel. To work, it requires
 a mapping file formatted as follows:
 
-TOKEN NUM_PROCS
+TOKEN NUM_PROCS LIMIT
 
 TOKEN: A GitHub OAuth token
 NUM_PROCS: Number of processes to spawn for this TOKEN
@@ -51,6 +51,8 @@ Values in the config.yaml file set with the -c command are overridden.
     options.opt :queue, 'Queue to retrieve project names from',
                 :short => 'q', :default => 'multiprocess-queue-client',
                 :type => :string
+    options.opt :inproc, 'Whether or not to run in-proc or fork a process',
+                :short => 'i', :default => false
   end
 
   def validate
@@ -69,14 +71,20 @@ Values in the config.yaml file set with the -c command are overridden.
       (1..instances.to_i).map do |i|
         newcfg = self.settings.clone
         newcfg = override_config(newcfg, :github_token, token)
-        newcfg = override_config(newcfg, :req_limit, limit)
+        newcfg = override_config(newcfg, :req_limit, limit.to_i)
 
         newcfg
       end
     end.flatten.select { |x| !x.nil? }
 
     children = configs.map do |config|
-      pid = Process::fork
+      if not options[:inproc]
+        begin
+          pid = Process::fork
+        rescue NotImplementedError
+          # Eat the error on Windows and run inline for testing
+        end
+      end
 
       if pid.nil?
         retriever = clazz.new(config, options[:queue], options)

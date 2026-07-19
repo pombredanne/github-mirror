@@ -33,23 +33,25 @@ module GHTorrent
         last_sha     = data['payload']['commits'].last['url'].split(/\//)[7]
         push_commits = data['payload']['commits'].map { |x| x['sha'] }
 
+        attempts = 0
         while true
+          attempts += 1
           commits = retrieve_commits(repo, last_sha, owner, 1)
-          return if commits.size <= 1 and commits[0]['sha'] == last_sha
+          return if attempts > 1 and commits[0]['sha'] == last_sha
 
           commits.each do |c|
             url = c['url'].split(/\//)
             next if push_commits.include? url[7]
 
             sha_not_exist = ght.db.from(:commits, :project_commits, :projects, :users).\
-                            where(:projects__id => :project_commits__project_id).\
-                            where(:commits__id => :project_commits__commit_id).\
-                            where(:projects__owner_id => :users__id).\
-                            where(:projects__name => url[5]).\
-                            where(:users__login => url[4]).\
-                            where(:commits__sha => url[7]).all.empty?
+                            where(Sequel.qualify('projects', 'id') => Sequel.qualify('project_commits', 'project_id')).\
+                            where(Sequel.qualify('commits', 'id') => Sequel.qualify('project_commits', 'commit_id')).\
+                            where(Sequel.qualify('projects', 'owner_id') => Sequel.qualify('users', 'id')).\
+                            where(Sequel.qualify('projects', 'name') => url[5]).\
+                            where(Sequel.qualify('users', 'login') => url[4]).\
+                            where(Sequel.qualify('commits', 'sha') => url[7]).all.empty?
 
-            if not sha_not_exist
+            unless sha_not_exist
               debug "Commit #{url[7]} already registered with #{url[4]}/#{url[5]}."
               return
             end
@@ -219,8 +221,11 @@ module GHTorrent
       repo = data['repo']['name'].split(/\//)[1]
       return unless data['payload']['ref_type'] == 'repository'
 
-      ght.ensure_repo(owner, repo)
-      ght.ensure_repo_recursive(owner, repo, false)
+      repo_entry = ght.ensure_repo(owner, repo)
+      unless repo_entry.nil?
+        repo_owner = ght.db[:users].first(:id => repo_entry[:owner_id])
+        ght.ensure_repo_recursive(repo_owner[:login], repo_entry[:name])
+      end
     end
   end
 end

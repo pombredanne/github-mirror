@@ -6,7 +6,7 @@ require 'json'
 
 require 'ghtorrent/logging'
 require 'ghtorrent/settings'
-require 'ghtorrent/time'
+require 'ghtorrent/ghtime'
 require 'version'
 
 module GHTorrent
@@ -48,9 +48,29 @@ module GHTorrent
 
 
     # A normal request. Returns a hash or an array of hashes representing the
-    # parsed JSON result.
-    def api_request(url)
-      parse_request_result api_request_raw(ensure_max_per_page(url))
+    # parsed JSON result. The media type
+    def api_request(url, media_type = '')
+      parse_request_result api_request_raw(ensure_max_per_page(url), media_type)
+    end
+
+    # Return the last modified time for the resource identified by the provided
+    # URL, as returned from GitHub.
+    def last_updated(url, etag)
+      begin
+        ts = Time.now
+        response = do_request(url, '', fmt_etag(etag))
+        info "Successful etag request. URL: #{url}, HTTP: #{response.status.first}, old_etag: #{fmt_etag(etag)}, new_etag: #{fmt_etag(response.meta['etag'])}, Remaining: #{@remaining}, Total: #{Time.now.to_ms - ts.to_ms} ms"
+      rescue OpenURI::HTTPError => e
+        response = e.io
+        if response.status.first != '304'
+          info "Successful etag request. URL: #{url}, HTTP: 304, etag: #{fmt_etag(etag)}, Remaining: #{@remaining}, Total: #{Time.now.to_ms - ts.to_ms} ms"
+          etag_request_error_message(url, e, etag)
+          raise e
+        end
+      end
+
+      return Time.parse(response.meta['last-modified']) unless response.meta['last-modified'].nil?
+      return Time.at(86400)
     end
 
     # Determine the number of pages contained in a multi-page API response
@@ -109,9 +129,20 @@ module GHTorrent
         if json.nil?
           []
         else
-          JSON.parse(json)
+          r = JSON.parse(json)
+
+          # Add the etag to the response only for individual entities
+          if result.meta['etag'] and r.class != Array
+            r['etag'] = fmt_etag(result.meta['etag'])
+          end
+
+          r
         end
       end
+    end
+
+    def fmt_etag(etag)
+      etag.tr('W"/','') unless etag.nil?
     end
 
     def fmt_token(token)
@@ -141,13 +172,17 @@ module GHTorrent
       msg.strip.gsub(/\s+/, ' ').gsub("\n", ' ')
     end
 
+    def etag_request_error_message(url, exception, etag)
+      request_error_msg(url, exception) + " etag: #{etag}"
+    end
+
     # Do the actual request and return the result object
-    def api_request_raw(url)
+    def api_request_raw(url, media_type = '')
 
       begin
         start_time = Time.now
 
-        contents = do_request(url)
+        contents = do_request(url, media_type)
         total = Time.now.to_ms - start_time.to_ms
         info "Successful request. URL: #{url}, Remaining: #{@remaining}, Total: #{total} ms"
 
@@ -161,6 +196,7 @@ module GHTorrent
           when 400, # Bad request
               403, # Forbidden
               404, # Not found
+              409, # Conflict -- returned on gets of empty repos
               422 then # Unprocessable entity
             warn request_error_msg(url, e)
             return nil
@@ -168,9 +204,9 @@ module GHTorrent
             warn request_error_msg(url, e)
             warn "Unauthorised request with token: #{@token}"
             raise e
-          when 451 # DCMA takedown
+          when 451 # DMCA takedown
             warn request_error_msg(url, e)
-            warn "Repo was taken down (DCMA)"
+            warn "Repo was taken down (DMCA)"
             return nil
           else # Server error or HTTP conditions that Github does not report
             warn request_error_msg(url, e)
@@ -181,9 +217,10 @@ module GHTorrent
         raise e
       ensure
         # The exact limit is only enforced upon the first @reset
-        if 5000 - @remaining >= @req_limit
+        # No idea how many requests are available on this key. Sleep if we have run out
+        if @remaining < @req_limit
           to_sleep = @reset - Time.now.to_i + 2
-          debug "Request limit reached, sleeping for #{to_sleep} secs"
+          warn "Request limit reached, reset in: #{to_sleep} secs"
           t = Thread.new do
             slept = 0
             while true do
@@ -192,7 +229,7 @@ module GHTorrent
               slept += 1
             end
           end
-          sleep(to_sleep)
+          sleep([0, to_sleep].max)
           t.exit
         end
       end
@@ -203,7 +240,7 @@ module GHTorrent
       return :none
     end
 
-    def do_request(url)
+    def do_request(url, media_type, etag = nil)
       @attach_ip  ||= config(:attach_ip)
       @token      ||= config(:github_token)
       @user_agent ||= config(:user_agent)
@@ -211,26 +248,33 @@ module GHTorrent
       @reset      ||= Time.now.to_i + 3600
       @auth_type  ||= auth_method(@token)
       @req_limit  ||= config(:req_limit)
+      media_type = 'application/json' unless media_type.size > 0
 
-      open_func ||=
-          case @auth_type
-            when :none
-              lambda {|url| open(url, 'User-Agent' => @user_agent)}
-            when :token
-              # As per: https://developer.github.com/v3/auth/#via-oauth-tokens
-              lambda {|url| open(url, 'User-Agent' => @user_agent,
-                                 'Authorization' => "token #{@token}") }
-          end
+      headers = {
+          'User-Agent' => @user_agent,
+          'Accept' => media_type
+      }
+
+      headers = headers.merge({'Authorization' => "token #{@token}"}) if auth_method(@token) == :token
+      headers = headers.merge({'If-None-Match' => etag}) if etag
+
+      # Only way to encode square brackets in standard Ruby
+      if url =~ %r{\[|\]}
+        protocol, host, path = url.split(%r{/+}, 3)
+        path = path.gsub('[', '%5B').gsub(']', '%5D')
+        url = "#{protocol}//#{host}/#{path}"
+      end
 
       result = if @attach_ip.nil? or @attach_ip.eql? '0.0.0.0'
-          open_func.call(url)
-        else
-          attach_to(@attach_ip) do
-            open_func.call(url)
-          end
+        open(url, headers)
+      else
+        attach_to(@attach_ip) do
+          open(url, headers)
         end
+      end
       @remaining = result.meta['x-ratelimit-remaining'].to_i
       @reset = result.meta['x-ratelimit-reset'].to_i
+
       result
     end
 
@@ -241,14 +285,14 @@ module GHTorrent
           alias_method :original_open, :open
 
           case RUBY_VERSION
-          when /1.9/
-            define_method(:open) do |conn_address, conn_port|
-              original_open(conn_address, conn_port, ip)
-            end
-          when /2.0/
-            define_method(:open) do |conn_address, conn_port, local_host, local_port|
-              original_open(conn_address, conn_port, ip, local_port)
-            end
+            when /1.8/, /1.9/
+              define_method(:open) do |conn_address, conn_port|
+                original_open(conn_address, conn_port, ip)
+              end
+            else
+              define_method(:open) do |conn_address, conn_port, local_host, local_port|
+                original_open(conn_address, conn_port, ip, local_port)
+              end
           end
         end
       end

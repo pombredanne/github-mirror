@@ -27,7 +27,7 @@ end
 
 # Shared extensions to library methods
 require 'ghtorrent/hash'
-require 'ghtorrent/time'
+require 'ghtorrent/ghtime'
 require 'ghtorrent/bson_orderedhash'
 
 # Basic utility modules
@@ -53,6 +53,7 @@ require 'ghtorrent/retriever'
 require 'ghtorrent/event_processing'
 require 'ghtorrent/ghtorrent'
 require 'ghtorrent/transacted_gh_torrent'
+require 'ghtorrent/refresher'
 
 # Multi-process queue clients
 require 'ghtorrent/multiprocess_queue_client'

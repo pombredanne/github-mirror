@@ -73,11 +73,6 @@ class TransactedGHTorrent < GHTorrent::Mirror
     end
   end
 
-  def ensure_project_member(owner, repo, new_member, date_added)
-    check_transaction do
-      super(owner, repo, new_member, date_added)
-    end
-  end
 
   def ensure_watcher(owner, repo, watcher, date_added = nil)
     check_transaction do
@@ -106,6 +101,12 @@ class TransactedGHTorrent < GHTorrent::Mirror
   def ensure_org(user, members = true)
     check_transaction do
       super(user, members)
+    end
+  end
+
+  def ensure_topics(owner, repo)
+    check_transaction do
+      super(owner, repo)
     end
   end
 

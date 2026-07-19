@@ -1,4 +1,5 @@
 require 'mongo'
+require 'uri'
 require 'ghtorrent/adapters/base_adapter'
 require 'ghtorrent/bson_orderedhash'
 
@@ -17,6 +18,7 @@ module GHTorrent
         :mongo_db => "mongo.db",
         :mongo_username => "mongo.username",
         :mongo_passwd => "mongo.password",
+        :mongo_ssl  => "mongo.ssl",
         :mongo_replicas => "mongo.replicas"
     }
 
@@ -37,7 +39,9 @@ module GHTorrent
         :issues                => %w(repo owner number),
         :issue_events          => %w(repo owner issue_id id),
         :issue_comments        => %w(repo owner issue_id id),
-        :geo_cache             => %w(key)
+        :geo_cache             => %w(key),
+        :pull_request_commits  => %w(sha),
+        :topics                => %w(repo owner)
     }
 
     attr_reader :settings
@@ -59,12 +63,10 @@ module GHTorrent
 
     def find(entity, query = {})
       super
-      result = mongo[entity].find(query)
-
-      result.to_a.map { |r|
-        r[@uniq] = r['_id'].to_s;
-        r.to_h
-      }
+      mongo[entity].
+          find(query).
+          to_a.
+          map { |r| r.to_h }
     end
 
     # Count the number of items returned by +query+
@@ -75,16 +77,14 @@ module GHTorrent
 
     def del(entity, query)
       super
-      raise StandardError 'No filter was specified. Cowardily refusing to remove all entries' if query == {}
+      raise StandardError 'No filter was specified. Cowardly refusing to remove all entries' if query == {}
       r = mongo[entity].delete_many(query)
       r.n
     end
 
     def upsert(entity, query = {}, new_entry)
       super
-      r = del(entity, query)
-      store(entity, new_entry)
-      r
+      mongo[entity].find_one_and_update(query, {"$set" => new_entry}, :upsert => :true)
     end
 
     def get_underlying_connection
@@ -108,22 +108,37 @@ module GHTorrent
       host = config(:mongo_host)
       port = config(:mongo_port)
       db = config(:mongo_db)
-
       replicas = config(:mongo_replicas)
-      replicas = if replicas.nil? then
-                   ''
-                 else
-                   ',' + replicas.strip.gsub(' ', ',')
-                 end
 
-      constring = if uname.nil?
-                    "mongodb://#{host}:#{port}#{replicas}/#{db}"
-                  else
-                    "mongodb://#{uname}:#{passwd}@#{host}:#{port}#{replicas}/#{db}"
-                  end
+      hosts = if replicas.nil? then
+                ["#{host}:#{port}"]
+              else
+                ["#{host}:#{port}"] + replicas
+              end
+
+      ssl = case config(:mongo_ssl)
+              when 'true', 'True', 't', true
+                true
+              else
+                false
+            end
 
       Mongo::Logger.logger.level = Logger::WARN
-      @mongo = Mongo::Client.new(constring)
+      @mongo = Mongo::Client.new(hosts,
+				 :database => db, 
+				 :password => passwd, 
+				 :user => uname, 
+				 :auth_source => 'admin',
+         :read => {
+           :mode => :secondary
+         },
+         :retry_reads => true,
+         :retry_writes => true,
+         :write_concern => {
+           :w => "majority",
+           :j => true
+         }
+      )
 
       dbs = @mongo.list_databases
       if dbs.find { |x| x['name'] == db }.nil?

@@ -1,8 +1,5 @@
 require 'sequel'
 
-require 'ghtorrent/migrations/mysql_defaults'
-
-
 Sequel.migration do
 
   up do
@@ -10,7 +7,7 @@ Sequel.migration do
 
     if defined?(Sequel::SQLite)
       add_column :projects, :updated_at, DateTime,
-                 :null => false, :default => 0
+                 :null => false, :default => 56400
     else
       add_column :projects, :updated_at, DateTime,
                  :null => false, :default => Sequel::CURRENT_TIMESTAMP
@@ -18,12 +15,12 @@ Sequel.migration do
 
     puts 'Adding default value to updated_at'
     self.transaction(:rollback => :reraise, :isolation => :repeatable) do
-      if defined?(Sequel::MySQL)
-        self << "update projects set updated_at = now();"
+      if defined?(Sequel::SQLite)
+        self << "update projects set updated_at = CURRENT_TIMESTAMP;"
       elsif defined?(Sequel::Postgres)
         self << "update projects set updated_at = now();"
-      elsif defined?(Sequel::SQLite)
-        self << "update projects set updated_at = CURRENT_TIMESTAMP;"
+      elsif defined?(Sequel::MySQL)
+        self << "update projects set updated_at = now();"
       else
         raise StandardError("Don't know how to set default value")
       end
